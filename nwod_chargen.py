@@ -1,61 +1,17 @@
 #!/usr/bin/env python
+"""
+Module for generating random NWoD characters.
+
+"""
+from nwod_data import CREATION_POINTS
+from nwod_data import MERITS
+
 from collections import OrderedDict
 from collections import defaultdict
+from itertools import chain
 from random import choice
 from random import randrange
 from random import shuffle
-
-CREATION_POINTS = {
-    'attributes': [5, 4, 3],
-    'skills': [11, 7, 4],
-    'merits': [7],
-}
-
-MERITS = {
-    'Common Sense': {'range': [1], 'CO': True},
-    'Danger Sense': {'range': [2]},
-    'Eidetic Memory': {'range': [2], 'CO': True},
-    'Encyclopedic Knowledge': {'range': [4], 'CO': True},
-    'Holistic Awareness': {'range': [3]},
-    'Language': {'range': [1]},
-    'Meditative Mind': {'range': [1]},
-    'Unseen Sense': {'range': [3]},
-
-    'Ambidextrous': {'range': [3], 'CO': True},
-    'Brawling Dodge': {'range': [1], 'prereqs': {'strength': 2, 'brawl': 1}},
-    'Direction Sense': {'range': [1]},
-    'Disarm': {'range': [2]},
-    'Fast Reflexes': {'range': [1, 2], 'cost': 'simple'},
-    'Fighting Finesse': {'range': [2],
-                         'prereqs': {'dexterity': 3, 'weaponry': 2}},
-    #'Fighting Style'
-    'Fleet of Foot': {'range': [1, 2, 3]},
-    'Fresh Start': {'range': [1]},
-    'Giant': {'range': [4], 'CO': True},
-    'Gunslinger': {'range': [3]},
-    'Iron Stamina': {'range': [1, 2, 3]},
-    'Iron Stomach': {'range': [2]},
-    'Natural Immunity': {'range': [1]},
-    'Quick Draw': {'range': [1], 'prereqs': {'dexterity': 3}},
-    'Quick Healer': {'range': [4], 'prereqs': {'stamina': 4}},
-    'Strong Back': {'range': [1], 'prereqs': {'dexterity': 3}},
-    'Strong Lungs': {'range': [3], 'prereqs': {'athletics': 3}},
-    'Stunt Driver': {'range': [3], 'prereqs': {'dexterity': 3}},
-    'Toxin Resistance': {'range': [2], 'prereqs': {'stamina': 3}},
-    'Weaponry Dodge': {'range': [1],
-                       'prereqs': {'strength': 2, 'weaponry': 1}},
-
-    'Allies': {'range': [1, 2, 3, 4, 5]},
-    'Barfly': {'range': [1]},
-    'Contacts': {'range': [1, 2, 3, 4, 5]},
-    'Fame': {'range': [1, 2, 3, 4, 5]},
-    'Inspiring': {'range': 4},
-    'Mentor': {'range': [1, 2, 3, 4, 5]},
-    'Resources': {'range': [1, 2, 3, 4, 5]},
-    'Retainer': {'range': [1, 2, 3, 4, 5]},
-    'Status': {'range': [1, 2, 3, 4, 5]},
-    'Striking Looks': {'range': [2, 4]},
-}
 
 BASE_DOTS = defaultdict(int, {'attributes': 1})
 
@@ -73,7 +29,26 @@ SECTIONS = OrderedDict([
                      'stealth', 'survival', 'weaponry']),
         ('social', ['animal ken', 'empathy', 'expression', 'intimidation',
                    'persuasion', 'socialize', 'streetwise', 'subterfuge']),
-    ]))])
+    ])),
+
+    ('merits', MERITS),
+
+    ])
+
+
+# There's really just no excuse for this.  I'd like to feel bad about it,
+# but I don't.  I'm using a list comprehension to call update multiple times,
+# updating a dictionary with the default values appropriate for the type,
+# even going so far as to use the int of a truth condition to choose whether
+# the default is one or zero.  Since the list has depth, I'm flattening it
+# as I go.
+PREREQS = {}
+_ = [PREREQS.update({_: int(section_ == 'attributes')
+                        for _ in chain(*[SECTIONS[section_][_]
+                            for _ in [_ for _ in SECTIONS[section_]]])})
+                                for section_ in SECTIONS]
+
+PURCHASE_TYPE = 'creation_points'
 
 def dots(section, number):
     """
@@ -82,26 +57,146 @@ def dots(section, number):
     a skill is 5 dots.
 
     """
+
+    if section == 'attributes' and number == 5:
+        return 4
     if section == 'skills' and number == 6:
         return 5
 
     return number
 
 
-def make_sheet():
-    # shuffle available points
-    [shuffle(CREATION_POINTS[_]) for _ in ('attributes', 'skills')]
+def cost(section, dots_, mes_cost=True):
+    """
+    Determine cost of a particular desired rank (i.e., skill rank 5
+    returns 6
 
+    """
+
+    if dots_ == 4 and section == 'attributes':
+        return 5
+
+    # correct for the 6 dot cost for 5 dot skills (and merits, for non-MES)
+    if dots_ == 5:
+        if section == 'skills':
+            return 6
+
+        if section == 'merits' and mes_cost == False:
+            return 6
+
+    return dots_
+
+
+def check_prereqs(item, purchase_type=PURCHASE_TYPE):
+    """
+    Check the prerequisites of an an item.
+
+    item: the particular entry to check the prerequisites of
+    purchase_type: what the item is being purchased with
+        (e.g., creation points or experience points)
+
+    returns True if the prerequisite is met, false otherwise.
+
+    """
+    prereqs = item.get('prereqs')
+    creation_only = item.get('CO', False)
+
+    if creation_only and purchase_type != 'creation_points':
+        return False
+
+    if not prereqs:
+        return True
+
+    # if any are missing or less than the target, prereq check fails
+    for prereq in prereqs:
+        try:
+            if PREREQS[prereq] < prereqs[prereq]:
+                return False
+        except KeyError:
+            return False
+
+    return True
+
+
+def purchase(sheet, section, category, available,
+             purchase_type=PURCHASE_TYPE):
+    """
+    Logic for purchasing Attributes/Merits/etc.
+
+    """
+
+    selection = choice([_ for _ in sheet[section][category]])
+    min_, max_ = (1, 4 if section == 'attributes' else 5)
+    if section == 'merits':
+        merit = SECTIONS[section][category][selection]
+        count = 0
+
+        while not check_prereqs(merit, purchase_type):
+            selection = choice([_ for _ in sheet[section][category]])
+            merit = SECTIONS[section][category][selection]
+            # try 3 times to buy a merit, then give up
+            if count >= 3:
+                return 0 # no purchase, no cost
+            count += 1
+
+    # pick a random number from the amount we're allowed
+    if section == 'merits':
+        try:
+            number = choice(merit['range'])
+        except TypeError:
+            number = merit['range']
+    else:
+        number = randrange(min_, max_ + 1)
+    number = cost(section, number)
+
+    current_dots = 0
+
+    try:
+        current_dots = sheet[section][category][selection]
+    except KeyError:
+        sheet[section][category][selection] = 0
+
+    number = min(number, available, 5 - current_dots)
+
+    # pick a random stat and add the random value
+    if number:
+        sheet[section][category][selection] += dots(section, number)
+        PREREQS[selection] = sheet[section][category][selection]
+    return number
+
+
+def render_category_types(sheet, section, category, category_type):
+    """
+    Render type by category.  Since we have zeroed entries for all merits,
+    we should skip those merits which are 0 dots, but we can't do the
+    same with Attributes and Skills.
+
+    returns a line of the item and the dot value, except if it's a zero-dot
+    merit, which returns an empty string.
+
+    """
+    if section == 'merits':
+        if not sheet[section][category][category_type]:
+            return ''
+
+    return '\n{0: <25} {1}'.format(category_type.title(),
+                 'o' * sheet[section][category][category_type])
+
+
+def make_sheet():
     """
     category_creation_points = dict(zip(ATTRIBUTES.keys(),
                                         CREATION_POINTS['attributes']))
     """
+    # shuffle available points
+    _ = [shuffle(CREATION_POINTS[_]) for _ in ('attributes', 'skills')]
+
 
     # create empty ordered dicts for attributes and skills corresponding
     # to the order commonly used on sheets, blank sheet, in other words
     # basically we're building an ordered dict in the form of
     #   sheet['attributes']['mental']['intelligence'], etc.
-    sheet = OrderedDict([(section, 
+    sheet = OrderedDict([(section,
         OrderedDict([(category,
             OrderedDict([(section_type, BASE_DOTS[section])
                 for section_type in SECTIONS[section][category]]))
@@ -114,28 +209,21 @@ def make_sheet():
         output += '\n\n==={}==='.format(section.upper())
         for category, creation_points in zip(sheet[section],
                                              CREATION_POINTS[section]):
-            output += '\n\n-{}-'.format(category.title())
+
+            # Merit categories are unimportant
+            if section != 'merits':
+                output += '\n\n-{}-'.format(category.title())
+
             # generate the stats closest to the point of printing them so
             # we're not traversing the loop multiple times, because doing that
             # annoys me
             while creation_points > 0:
-                # pick a random number from the amount we're allowed
-                max_ = 4 if section == 'attributes' else 5
-                number = randrange(1, max_ + 1)
-                # correct for the 6 dot cost for 5 dot skills
-
-                number = (6 if number == 5 and section == 'skills'
-                          else number)
-                selection = choice([_ for _ in sheet[section][category]])
-                current_dots = sheet[section][category][selection]
-                number = min(number, creation_points, 5 - current_dots)
-                # pick a random stat and add the random value
-                sheet[section][category][selection] += dots(section, number)
-                creation_points -= number
+                creation_points -= purchase(sheet, section, category,
+                                            creation_points)
 
             for category_type in sheet[section][category]:
-                output += '\n{0: <15} {1}'.format(category_type.title(),
-                     'o' * sheet[section][category][category_type])
+                output += render_category_types(sheet, section, category,
+                                                category_type)
 
     return output
 
