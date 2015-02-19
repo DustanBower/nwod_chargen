@@ -1,0 +1,15 @@
+
+nwod_chargen
+
+Script for generating nwod characters.
+
+Currently only creates mortals and uses merits from the base book.
+
+
+usage:
+
+run on the command line, doesn't currently accept any arguments
+
+e.g.,
+
+./nwod_chargen.py
